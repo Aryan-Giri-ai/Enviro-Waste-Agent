@@ -32,19 +32,24 @@ class MainAgent:
         self.logger.trace_id = trace_id
         self.session.set_input(image_metadata=image_path, location_query=location)
 
-        if not image_path and not user_input:
-            return {
-                "response": "Please provide a message, or upload a waste image to get started.",
-                "trace_id": trace_id,
-                "approved": True,
-            }
+        # Normalise user input to check for simple greetings / help triggers
+        greetings = {"hello", "hi", "hey", "help", "start", "welcome", "test", "demo"}
+        cleaned_input = user_input.strip().lower().rstrip("!?.")
+        is_greeting = cleaned_input in greetings or len(user_input.split()) <= 2 and cleaned_input == ""
 
-        if not image_path:
-            response_text = self._handle_text_only(user_input)
-            self.session.set_final_report(response_text)
-            return {"response": response_text, "trace_id": trace_id, "approved": True}
+        if is_greeting and not image_path:
+            welcome_text = self._handle_welcome_message()
+            self.session.set_final_report(welcome_text)
+            return {"response": welcome_text, "trace_id": trace_id, "approved": True}
 
-        plan, aggregated = self.planner.run(trace_id, image_path=image_path, location=location, weight_kg=weight_kg)
+        # Run the full multi-agent sorting and classification pipeline (multimodal or text-only)
+        plan, aggregated = self.planner.run(
+            trace_id,
+            image_path=image_path,
+            text_description=user_input,
+            location=location,
+            weight_kg=weight_kg
+        )
         self.session.set_task_list(plan)
         self.session.store_worker_response("aggregated", aggregated)
 
@@ -66,13 +71,14 @@ class MainAgent:
 
         return {"response": report, "trace_id": trace_id, "approved": approved}
 
-    def _handle_text_only(self, user_input: str) -> str:
+    def _handle_welcome_message(self) -> str:
         return (
-            "Hello! I'm the ENVIRO-WASTE-AGENT. "
-            "Upload an image of a waste item (and optionally your location) "
-            "and I'll classify it, give you localized sorting instructions, "
-            "and show you its environmental footprint.\n\n"
-            f"You said: \"{user_input}\""
+            "👋 Hello! I'm the **ENVIRO-WASTE-AGENT**.\n\n"
+            "I can help you sort waste and show you environmental statistics. You can:\n"
+            "1. **Upload an image** of the waste items.\n"
+            "2. **Type a list of items** directly in the text box (e.g. *'broken laptop, paint can, glass jar'*).\n"
+            "3. **Do both** (upload an image and add text context).\n\n"
+            "Optionally, provide your location (e.g. *'Seattle, USA'*) for localized municipal guidelines!"
         )
 
     def _render_report(self, aggregated: dict, approved: bool, reasons: list) -> str:

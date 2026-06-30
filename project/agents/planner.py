@@ -24,25 +24,25 @@ class Planner:
         if self.logger:
             self.logger.log_event(step, **kwargs)
 
-    def create_plan(self, trace_id: str, image_path: str = None, location: str = None):
+    def create_plan(self, trace_id: str, image_path: str = None, text_description: str = None, location: str = None):
         """Builds an ordered task list for this request."""
         plan = []
-        if image_path:
+        if image_path or text_description:
             plan.append({"task": "classify_waste_image", "worker": "vision_worker"})
         plan.append({"task": "lookup_disposal_rules", "worker": "rules_worker"})
         plan.append({"task": "calculate_eco_footprint", "worker": "eco_worker"})
         self._log("planner_create_plan", trace_id=trace_id, plan=plan)
         return plan
 
-    def run(self, trace_id: str, image_path: str = None, location: str = None, weight_kg: float = 0.1):
+    def run(self, trace_id: str, image_path: str = None, text_description: str = None, location: str = None, weight_kg: float = 0.1):
         """
         Executes the full plan: Vision -> Rules -> Eco, then returns
         an aggregated results dict ready for the Evaluator.
         """
-        context = build_context(self.role, {"image_path": image_path, "location": location})
+        context = build_context(self.role, {"image_path": image_path, "text_description": text_description, "location": location})
         self._log("planner_start", trace_id=trace_id, context=context["system_prompt"])
 
-        plan = self.create_plan(trace_id, image_path, location)
+        plan = self.create_plan(trace_id, image_path=image_path, text_description=text_description, location=location)
         aggregated = {"items": [], "materials": [], "instructions": {}, "footprints": [], "awareness_tip": ""}
 
         vision_request = a2a_protocol.make_request(
@@ -50,7 +50,7 @@ class Planner:
             sender=self.name,
             receiver=self.vision_worker.name,
             task="classify_waste_image",
-            parameters={"image_path": image_path},
+            parameters={"image_path": image_path, "text_description": text_description},
         )
         vision_response = self.vision_worker.handle_request(vision_request)
         items = vision_response["payload"]["result"]["items"]

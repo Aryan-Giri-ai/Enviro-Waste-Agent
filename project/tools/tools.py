@@ -188,68 +188,104 @@ class ClassifierTool:
     Fallback: Filename-keyword heuristic (original behaviour).
     """
 
-    def classify(self, image_path: str):
+    def classify(self, image_path: str = None, text_description: str = None):
         """
-        Identify waste item(s) in an image.
+        Identify waste item(s) in an image or text description.
         Returns a list of {label, material, confidence, hazardous}.
         """
         # --- Primary: Gemini API ---
-        if _gemini_client and image_path and os.path.isfile(image_path):
+        if _gemini_client:
             try:
-                from PIL import Image as PIL_Image
-                # Open the actual image file to send to Gemini
-                img = PIL_Image.open(image_path)
+                raw_items = []
                 
-                prompt = (
-                    "You are a waste classification expert. Look at this image of waste items.\n"
-                    "Identify the most likely waste item(s) present in the image. "
-                    "Classify each item's material type exactly into one of the allowed categories: "
-                    "PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, paper, "
-                    "cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain."
-                )
-                
-                # Use structured outputs if supported by the SDK environment
-                if _genai_types is not None:
-                    config = _genai_types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=ClassificationResult,
+                # Case A: Multimodal (Image provided)
+                if image_path and os.path.isfile(image_path):
+                    from PIL import Image as PIL_Image
+                    img = PIL_Image.open(image_path)
+                    
+                    prompt = (
+                        "You are a waste classification expert. Look at this image of waste items.\n"
+                        "Identify the most likely waste item(s) present in the image. "
+                        "Classify each item's material type exactly into one of the allowed categories: "
+                        "PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, paper, "
+                        "cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain."
                     )
-                    response = _gemini_client.models.generate_content(
-                        model=_gemini_model,
-                        contents=[img, prompt],
-                        config=config,
+                    if text_description:
+                        prompt += f"\nUser description context: {text_description}"
+                        
+                    if _genai_types is not None:
+                        config = _genai_types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=ClassificationResult,
+                        )
+                        response = _gemini_client.models.generate_content(
+                            model=_gemini_model,
+                            contents=[img, prompt],
+                            config=config,
+                        )
+                        data = json.loads(response.text)
+                        raw_items = data.get("items", [])
+                    else:
+                        json_prompt = (
+                            prompt + "\nRespond ONLY with a valid JSON object matching this schema:\n"
+                            '{"items": [{"label": "string", "material": "string", "confidence": float, "hazardous": boolean}]}'
+                        )
+                        response = _gemini_client.models.generate_content(
+                            model=_gemini_model,
+                            contents=[img, json_prompt],
+                        )
+                        raw = response.text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                        data = json.loads(raw)
+                        raw_items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+
+                # Case B: Text Only (No image provided)
+                elif text_description and text_description.strip():
+                    prompt = (
+                        "You are a waste classification expert. Read this description of waste items:\n"
+                        f'"{text_description}"\n'
+                        "Identify each waste item described and classify its material type exactly into one of: "
+                        "PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, paper, "
+                        "cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain."
                     )
-                    raw = response.text
-                    data = json.loads(raw)
-                    raw_items = data.get("items", [])
-                else:
-                    # Raw JSON fallback prompting
-                    json_prompt = (
-                        prompt + "\nRespond ONLY with a valid JSON object matching this schema:\n"
-                        '{"items": [{"label": "string", "material": "string", "confidence": float, "hazardous": boolean}]}'
-                    )
-                    response = _gemini_client.models.generate_content(
-                        model=_gemini_model,
-                        contents=[img, json_prompt],
-                    )
-                    raw = response.text
-                    raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-                    data = json.loads(raw)
-                    raw_items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                    if _genai_types is not None:
+                        config = _genai_types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=ClassificationResult,
+                        )
+                        response = _gemini_client.models.generate_content(
+                            model=_gemini_model,
+                            contents=prompt,
+                            config=config,
+                        )
+                        data = json.loads(response.text)
+                        raw_items = data.get("items", [])
+                    else:
+                        json_prompt = (
+                            prompt + "\nRespond ONLY with a valid JSON object matching this schema:\n"
+                            '{"items": [{"label": "string", "material": "string", "confidence": float, "hazardous": boolean}]}'
+                        )
+                        response = _gemini_client.models.generate_content(
+                            model=_gemini_model,
+                            contents=json_prompt,
+                        )
+                        raw = response.text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                        data = json.loads(raw)
+                        raw_items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
 
                 # Normalise and structure results
-                items = []
-                for item in raw_items:
-                    if not isinstance(item, dict):
-                        continue
-                    mat = item.get("material", "uncertain")
-                    items.append({
-                        "label": item.get("label", "waste item"),
-                        "material": mat,
-                        "confidence": float(item.get("confidence", 0.8)),
-                        "hazardous": mat in HAZARDOUS_MATERIALS,
-                    })
-                return items
+                if raw_items:
+                    items = []
+                    for item in raw_items:
+                        if not isinstance(item, dict):
+                            continue
+                        mat = item.get("material", "uncertain")
+                        items.append({
+                            "label": item.get("label", "waste item"),
+                            "material": mat,
+                            "confidence": float(item.get("confidence", 0.8)),
+                            "hazardous": mat in HAZARDOUS_MATERIALS,
+                        })
+                    return items
             except Exception as exc:
                 warnings.warn(
                     f"ClassifierTool Gemini call failed ({exc}). Using local fallback.",
@@ -257,13 +293,21 @@ class ClassifierTool:
                     stacklevel=2,
                 )
 
-        # --- Fallback: filename-keyword heuristic (original behaviour) ---
-        filename = os.path.basename(image_path).lower() if image_path else ""
-        matches = [
-            (keyword, material)
-            for keyword, material in MATERIAL_KEYWORDS.items()
-            if keyword in filename
-        ]
+        # --- Fallback: Keyword search in text_description or filename ---
+        search_text = ""
+        if text_description:
+            search_text = text_description.lower()
+        elif image_path:
+            search_text = os.path.basename(image_path).lower()
+
+        matches = []
+        if search_text:
+            matched_materials = set()
+            # Split search text to find discrete keywords
+            for keyword, material in MATERIAL_KEYWORDS.items():
+                if keyword in search_text and material not in matched_materials:
+                    matches.append((keyword, material))
+                    matched_materials.add(material)
 
         if not matches:
             return [

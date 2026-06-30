@@ -37,11 +37,12 @@ class VisionClassifierWorker(BaseWorker):
         trace_id = request_envelope["trace_id"]
         params = request_envelope["payload"].get("parameters", {})
         image_path = params.get("image_path")
+        text_description = params.get("text_description")
 
-        context = build_context(self.role, {"image_path": image_path})
-        self._log("vision_worker_start", trace_id=trace_id, image_path=image_path)
+        context = build_context(self.role, {"image_path": image_path, "text_description": text_description})
+        self._log("vision_worker_start", trace_id=trace_id, image_path=image_path, text_description=text_description)
 
-        items = self.classifier_tool.classify(image_path)
+        items = self.classifier_tool.classify(image_path, text_description=text_description)
 
         self._log("vision_worker_end", trace_id=trace_id, items=items)
 

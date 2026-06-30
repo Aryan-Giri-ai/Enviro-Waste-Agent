@@ -102,18 +102,25 @@ class ClassifierTool:
         # --- Primary: Gemini API ---
         if _gemini_client and image_path and os.path.isfile(image_path):
             try:
+                from PIL import Image as PIL_Image
+                # Open the actual image file to send to Gemini
+                img = PIL_Image.open(image_path)
+                
                 prompt = (
-                    "You are a waste classification expert. "
-                    f"The uploaded file path is: {image_path}\n"
-                    "Based on the filename and any context, identify the most likely waste "
-                    "item(s) and respond ONLY with valid JSON — a list of objects, each with "
-                    'keys: "label" (str), "material" (str, choose from: PET plastic, mixed plastic, '
-                    "LDPE plastic film, aluminum, steel, glass, paper, cardboard, alkaline battery, "
-                    'e-waste, organic waste, polystyrene foam, uncertain), '
-                    '"confidence" (float 0.0-1.0), "hazardous" (bool). '
+                    "You are a waste classification expert. Look at this image of waste items.\n"
+                    "Identify the most likely waste item(s) present in the image and respond ONLY with "
+                    'valid JSON — a list of objects, each with keys: "label" (str), "material" (str, '
+                    "choose from: PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, "
+                    "paper, cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain), "
+                    '"confidence" (float 0.0-1.0), "hazardous" (bool).\n'
                     "Return ONLY the JSON array, no markdown, no explanation."
                 )
-                raw = _gemini_generate(prompt)
+                
+                response = _gemini_client.models.generate_content(
+                    model=_gemini_model,
+                    contents=[img, prompt],
+                )
+                raw = response.text
                 # Strip any accidental markdown fencing.
                 raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
                 items = json.loads(raw)

@@ -20,6 +20,19 @@ import random
 import warnings
 
 from project.core.config import GOOGLE_API_KEY, GEMINI_MODEL_NAME
+from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Structured Output Schemas for Gemini API
+# ---------------------------------------------------------------------------
+class WasteItem(BaseModel):
+    label: str = Field(description="Name/description of the item (e.g. plastic bottle, apple core)")
+    material: str = Field(description="Material type from choices: PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, paper, cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain")
+    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
+    hazardous: bool = Field(description="Whether the item is hazardous waste or e-waste")
+
+class ClassificationResult(BaseModel):
+    items: list[WasteItem] = Field(description="List of detected waste items in the image")
 
 # ---------------------------------------------------------------------------
 # Gemini client — initialised once at module load.
@@ -27,13 +40,18 @@ from project.core.config import GOOGLE_API_KEY, GEMINI_MODEL_NAME
 # ---------------------------------------------------------------------------
 _gemini_client = None
 _gemini_model = None
+_genai_types = None
+
 
 if GOOGLE_API_KEY:
     try:
         from google import genai as _genai_lib          # google-genai SDK
+        from google.genai import types as _genai_types_mod
         _gemini_client = _genai_lib.Client(api_key=GOOGLE_API_KEY)
         _gemini_model = GEMINI_MODEL_NAME
+        _genai_types = _genai_types_mod
     except ImportError:
+
         warnings.warn(
             "google-genai package not found. "
             "Install it with: pip install google-genai\n"
@@ -108,25 +126,53 @@ class ClassifierTool:
                 
                 prompt = (
                     "You are a waste classification expert. Look at this image of waste items.\n"
-                    "Identify the most likely waste item(s) present in the image and respond ONLY with "
-                    'valid JSON — a list of objects, each with keys: "label" (str), "material" (str, '
-                    "choose from: PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, "
-                    "paper, cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain), "
-                    '"confidence" (float 0.0-1.0), "hazardous" (bool).\n'
-                    "Return ONLY the JSON array, no markdown, no explanation."
+                    "Identify the most likely waste item(s) present in the image. "
+                    "Classify each item's material type exactly into one of the allowed categories: "
+                    "PET plastic, mixed plastic, LDPE plastic film, aluminum, steel, glass, paper, "
+                    "cardboard, alkaline battery, e-waste, organic waste, polystyrene foam, uncertain."
                 )
                 
-                response = _gemini_client.models.generate_content(
-                    model=_gemini_model,
-                    contents=[img, prompt],
-                )
-                raw = response.text
-                # Strip any accidental markdown fencing.
-                raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
-                items = json.loads(raw)
-                # Validate and tag hazardous flag from authoritative set.
-                for item in items:
-                    item["hazardous"] = item.get("material", "") in HAZARDOUS_MATERIALS
+                # Use structured outputs if supported by the SDK environment
+                if _genai_types is not None:
+                    config = _genai_types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=ClassificationResult,
+                    )
+                    response = _gemini_client.models.generate_content(
+                        model=_gemini_model,
+                        contents=[img, prompt],
+                        config=config,
+                    )
+                    raw = response.text
+                    data = json.loads(raw)
+                    raw_items = data.get("items", [])
+                else:
+                    # Raw JSON fallback prompting
+                    json_prompt = (
+                        prompt + "\nRespond ONLY with a valid JSON object matching this schema:\n"
+                        '{"items": [{"label": "string", "material": "string", "confidence": float, "hazardous": boolean}]}'
+                    )
+                    response = _gemini_client.models.generate_content(
+                        model=_gemini_model,
+                        contents=[img, json_prompt],
+                    )
+                    raw = response.text
+                    raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                    data = json.loads(raw)
+                    raw_items = data.get("items", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+
+                # Normalise and structure results
+                items = []
+                for item in raw_items:
+                    if not isinstance(item, dict):
+                        continue
+                    mat = item.get("material", "uncertain")
+                    items.append({
+                        "label": item.get("label", "waste item"),
+                        "material": mat,
+                        "confidence": float(item.get("confidence", 0.8)),
+                        "hazardous": mat in HAZARDOUS_MATERIALS,
+                    })
                 return items
             except Exception as exc:
                 warnings.warn(

@@ -85,10 +85,17 @@ class Planner:
     def refine(self, trace_id: str, aggregated: dict, rejection_reasons: list):
         """
         Called by MainAgent when the Evaluator rejects a report.
-        Applies simple corrective rules (e.g. force a hazard warning)
-        and returns the corrected aggregated package.
+        Applies corrective rules:
+          1. Ensures hazardous items have an explicit hazard_warning header.
+          2. Sanitises any disposal instruction containing unsafe keywords
+             (incinerate / burn / bury) for hazardous or e-waste materials,
+             replacing them with a safe certified-drop-off directive.
+             This closes the safety hole that would open once real
+             LLM-generated search summaries are wired in.
         """
         self._log("planner_refine", trace_id=trace_id, reasons=rejection_reasons)
+
+        # Rule 1 — ensure the hazard_warning banner is present.
         for item in aggregated.get("items", []):
             if item.get("hazardous") and "hazard_warning" not in aggregated:
                 aggregated["hazard_warning"] = (
@@ -96,4 +103,43 @@ class Planner:
                     "Do NOT place them in household trash, recycling, or compost. "
                     "Take them to an authorized hazardous-waste or e-waste collection point."
                 )
+
+        # Rule 2 — sanitise unsafe disposal keywords in instructions.
+        _UNSAFE_KEYWORDS = {"incinerate", "burn", "bury"}
+        _HAZARDOUS_MATERIAL_SIGNALS = {"battery", "e-waste", "chemical", "paint", "solvent"}
+        _SAFE_REPLACEMENT = (
+            "Take to a certified hazardous-waste or e-waste collection point. "
+            "Do NOT place in household trash, recycling, or compost."
+        )
+
+        for material, bullets in aggregated.get("instructions", {}).items():
+            material_lower = material.lower()
+            is_hazardous_material = any(sig in material_lower for sig in _HAZARDOUS_MATERIAL_SIGNALS)
+            if not is_hazardous_material:
+                continue
+
+            if isinstance(bullets, list):
+                sanitised = []
+                for bullet in bullets:
+                    if any(kw in bullet.lower() for kw in _UNSAFE_KEYWORDS):
+                        self._log(
+                            "planner_refine_sanitised",
+                            trace_id=trace_id,
+                            material=material,
+                            original=bullet,
+                        )
+                        sanitised.append(f"- {_SAFE_REPLACEMENT}")
+                    else:
+                        sanitised.append(bullet)
+                aggregated["instructions"][material] = sanitised
+            elif isinstance(bullets, str):
+                if any(kw in bullets.lower() for kw in _UNSAFE_KEYWORDS):
+                    self._log(
+                        "planner_refine_sanitised",
+                        trace_id=trace_id,
+                        material=material,
+                        original=bullets,
+                    )
+                    aggregated["instructions"][material] = _SAFE_REPLACEMENT
+
         return aggregated

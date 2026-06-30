@@ -21,7 +21,7 @@ If you find a bug or have an idea for a feature, please search existing GitHub I
    ```bash
    git clone https://github.com/your-username/ENVIRO-WASTE-AGENT.git
    cd ENVIRO-WASTE-AGENT
-   pip install -r requirements.txt
+   pip install -r project/requirements.txt
    ```
 3. **Create a Branch:** Create a branch for your work.
    ```bash
@@ -38,6 +38,7 @@ If you find a bug or have an idea for a feature, please search existing GitHub I
 
 ## 🛠️ Development Guidelines
 - **Multi-Agent Patterns:** Respect the Planner-Worker-Evaluator architecture. Do not bypass the Evaluator agent for client delivery.
-- **Safety First:** Never suggest burning, burying, or dumping hazardous waste. Always ensure the safety check in `evaluator.py` passes.
-- **A2A Protocol compliance:** Use the `A2AMessage` model for any communication payloads between agents.
+- **Safety First:** Never suggest burning, burying, or dumping hazardous waste. Always ensure the safety check in `evaluator.py` passes. The `refine()` method in `planner.py` will automatically sanitise unsafe keywords — do not remove this logic.
+- **A2A Protocol compliance:** Use the helper functions in `a2a_protocol.py` (`make_request`, `make_response`, `make_error`) for all inter-agent message passing. Messages are plain Python dicts validated by `validate_message()`.
+- **SDK:** Use the `google-genai` package (`from google import genai`). The older `google-generativeai` package was deprecated by Google on 30 Nov 2025 and should not be used.
 - **Clean Imports:** Ensure absolute pathing is used inside the `project/` directory package structure.

@@ -5,15 +5,63 @@ external (or simulated) environments: an image classifier,
 a disposal-rules search, an eco-impact calculator, and a
 text summarizer.
 
-NOTE: The Classifier and Search tools are implemented with
-lightweight local heuristics/lookup tables so the whole system
-runs end-to-end inside Colab without requiring external API
-keys or network access. Swap in a real model/API call inside
-ClassifierTool.classify() and SearchTool.search() when ready.
+Gemini integration:
+  - ClassifierTool, SearchTool, SummarizerTool each attempt a Gemini
+    API call first (using google-genai SDK + GOOGLE_API_KEY from config).
+  - If the key is absent, empty, or the API call fails for any reason
+    (quota, network, etc.) the tool falls back transparently to the
+    local heuristic already implemented here.
+  - EcoCalculatorTool is purely local and requires no API.
 """
 
 import os
+import json
 import random
+import warnings
+
+from project.core.config import GOOGLE_API_KEY, GEMINI_MODEL_NAME
+
+# ---------------------------------------------------------------------------
+# Gemini client — initialised once at module load.
+# Uses the new `google-genai` SDK (google-generativeai was deprecated Nov 2025).
+# ---------------------------------------------------------------------------
+_gemini_client = None
+_gemini_model = None
+
+if GOOGLE_API_KEY:
+    try:
+        from google import genai as _genai_lib          # google-genai SDK
+        _gemini_client = _genai_lib.Client(api_key=GOOGLE_API_KEY)
+        _gemini_model = GEMINI_MODEL_NAME
+    except ImportError:
+        warnings.warn(
+            "google-genai package not found. "
+            "Install it with: pip install google-genai\n"
+            "Falling back to local heuristics.",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+    except Exception as exc:
+        warnings.warn(
+            f"Gemini client initialisation failed ({exc}). "
+            "Falling back to local heuristics.",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+
+
+def _gemini_generate(prompt: str) -> str:
+    """
+    Send a text prompt to Gemini and return the response text.
+    Raises an exception if the client is not available or the call fails.
+    """
+    if _gemini_client is None:
+        raise RuntimeError("Gemini client is not initialised.")
+    response = _gemini_client.models.generate_content(
+        model=_gemini_model,
+        contents=prompt,
+    )
+    return response.text
 
 
 MATERIAL_KEYWORDS = {
@@ -40,13 +88,47 @@ HAZARDOUS_MATERIALS = {"alkaline battery", "e-waste", "lithium battery", "chemic
 
 
 class ClassifierTool:
-    """Wraps an image classification API/model call."""
+    """Wraps an image classification API/model call.
+
+    Primary:  Gemini multimodal API (describes the waste item from a file path).
+    Fallback: Filename-keyword heuristic (original behaviour).
+    """
 
     def classify(self, image_path: str):
         """
         Identify waste item(s) in an image.
         Returns a list of {label, material, confidence, hazardous}.
         """
+        # --- Primary: Gemini API ---
+        if _gemini_client and image_path and os.path.isfile(image_path):
+            try:
+                prompt = (
+                    "You are a waste classification expert. "
+                    f"The uploaded file path is: {image_path}\n"
+                    "Based on the filename and any context, identify the most likely waste "
+                    "item(s) and respond ONLY with valid JSON — a list of objects, each with "
+                    'keys: "label" (str), "material" (str, choose from: PET plastic, mixed plastic, '
+                    "LDPE plastic film, aluminum, steel, glass, paper, cardboard, alkaline battery, "
+                    'e-waste, organic waste, polystyrene foam, uncertain), '
+                    '"confidence" (float 0.0-1.0), "hazardous" (bool). '
+                    "Return ONLY the JSON array, no markdown, no explanation."
+                )
+                raw = _gemini_generate(prompt)
+                # Strip any accidental markdown fencing.
+                raw = raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+                items = json.loads(raw)
+                # Validate and tag hazardous flag from authoritative set.
+                for item in items:
+                    item["hazardous"] = item.get("material", "") in HAZARDOUS_MATERIALS
+                return items
+            except Exception as exc:
+                warnings.warn(
+                    f"ClassifierTool Gemini call failed ({exc}). Using local fallback.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        # --- Fallback: filename-keyword heuristic (original behaviour) ---
         filename = os.path.basename(image_path).lower() if image_path else ""
         matches = [
             (keyword, material)
@@ -95,10 +177,34 @@ LOCAL_RULES_DB = {
 
 
 class SearchTool:
-    """Wraps a web search / database lookup for local disposal rules."""
+    """Wraps a web search / database lookup for local disposal rules.
+
+    Primary:  Gemini API — generates location-aware disposal guidance.
+    Fallback: LOCAL_RULES_DB static dictionary (original behaviour).
+    """
 
     def search(self, location: str, material: str):
         """Return localized (or general best-practice) disposal guidance for a material and location."""
+        # --- Primary: Gemini API ---
+        if _gemini_client:
+            try:
+                location_ctx = f"The user is located in: {location}." if location else "Location is unknown; provide general global best-practice guidance."
+                prompt = (
+                    f"You are a waste disposal expert. {location_ctx}\n"
+                    f"Provide clear, safe, practical disposal instructions for this material: {material}.\n"
+                    "Rules: NEVER suggest incineration, burning, burying, or illegal dumping. "
+                    "If hazardous (battery, e-waste, chemical), explicitly say to take to a certified disposal centre.\n"
+                    "Keep the response under 60 words. Return plain text only, no markdown."
+                )
+                return _gemini_generate(prompt).strip()
+            except Exception as exc:
+                warnings.warn(
+                    f"SearchTool Gemini call failed ({exc}). Using local fallback.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        # --- Fallback: static lookup table (original behaviour) ---
         rule = LOCAL_RULES_DB.get(material, LOCAL_RULES_DB["uncertain"])
         if location:
             note = f"(General guidance shown - localized rules for '{location}' were not found in this demo lookup table.)"
@@ -165,10 +271,39 @@ class EcoCalculatorTool:
 
 
 class SummarizerTool:
-    """Condenses longer text (e.g. municipal guideline pages) into bullets."""
+    """Condenses longer text (e.g. municipal guideline pages) into bullets.
+
+    Primary:  Gemini API — produces polished, context-aware bullet points.
+    Fallback: Sentence-splitting heuristic (original behaviour).
+    """
 
     def summarize(self, text: str, max_bullets: int = 3):
         if not text:
             return []
+
+        # --- Primary: Gemini API ---
+        if _gemini_client:
+            try:
+                prompt = (
+                    f"Summarise the following waste disposal guidance into at most {max_bullets} "
+                    "concise, actionable bullet points. "
+                    "Do NOT suggest burning, incineration, burying, or illegal dumping. "
+                    "Return ONLY bullet points starting with '- ', one per line, no additional text.\n\n"
+                    f"{text}"
+                )
+                raw = _gemini_generate(prompt).strip()
+                bullets = [line.strip() for line in raw.splitlines() if line.strip().startswith("-")]
+                return bullets[:max_bullets] if bullets else self._local_summarize(text, max_bullets)
+            except Exception as exc:
+                warnings.warn(
+                    f"SummarizerTool Gemini call failed ({exc}). Using local fallback.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        # --- Fallback: sentence-splitting heuristic (original behaviour) ---
+        return self._local_summarize(text, max_bullets)
+
+    def _local_summarize(self, text: str, max_bullets: int) -> list:
         sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip()]
         return [f"- {s}." for s in sentences[:max_bullets]]

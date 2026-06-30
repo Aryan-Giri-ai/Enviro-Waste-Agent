@@ -59,7 +59,7 @@ pip install -r project/requirements.txt
 ### 2. Configure environment
 Create a `.env` file in your workspace directory (or project folder) containing your Gemini API key:
 ```env
-GEMINI_API_KEY=your_gemini_api_key_here
+GOOGLE_API_KEY=your_gemini_api_key_here
 ```
 
 ### 3. Run Demo

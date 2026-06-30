@@ -83,23 +83,99 @@ def _gemini_generate(prompt: str) -> str:
 
 
 MATERIAL_KEYWORDS = {
+    # --- Metal (Aluminum and Steel) ---
+    "can": "aluminum",
+    "cans": "aluminum",
+    "foil": "aluminum",
+    "engine": "steel",
+    "gear": "steel",
+    "gears": "steel",
+    "plate": "steel",
+    "plates": "steel",
+    "wire": "steel",
+    "pipe": "steel",
+    "scrap metal": "steel",
+    "nail": "steel",
+    "screw": "steel",
+    "bolt": "steel",
+    
+    # --- Organic (Food, Garden, and Wood Waste) ---
+    "leaf": "organic waste",
+    "leaves": "organic waste",
+    "dry leaves": "organic waste",
+    "stump": "organic waste",
+    "tree stumps": "organic waste",
+    "wood": "organic waste",
+    "wooden": "organic waste",
+    "branch": "organic waste",
+    "bark": "organic waste",
+    "scrap": "organic waste",
+    "scraps": "organic waste",
+    "vegetable scraps": "organic waste",
+    "rotten": "organic waste",
+    "rotten food": "organic waste",
+    "apple": "organic waste",
+    "core": "organic waste",
+    "peel": "organic waste",
+    "orange": "organic waste",
+    "bread": "organic waste",
+    "coffee": "organic waste",
+    "tea": "organic waste",
+    "banana": "organic waste",
+    "food": "organic waste",
+    
+    # --- Plastics / Film / Foam ---
     "bottle": "PET plastic",
     "plastic": "mixed plastic",
+    "cup": "mixed plastic",
+    "container": "mixed plastic",
+    "tub": "mixed plastic",
     "bag": "LDPE plastic film",
-    "can": "aluminum",
-    "tin": "steel",
-    "glass": "glass",
-    "jar": "glass",
-    "paper": "paper",
-    "cardboard": "cardboard",
-    "box": "cardboard",
-    "battery": "alkaline battery",
-    "electronic": "e-waste",
-    "phone": "e-waste",
-    "food": "organic waste",
-    "banana": "organic waste",
+    "wrap": "LDPE plastic film",
+    "shrink wrap": "LDPE plastic film",
+    "bubble wrap": "LDPE plastic film",
     "styrofoam": "polystyrene foam",
     "foam": "polystyrene foam",
+    "tray": "polystyrene foam",
+    "cup_foam": "polystyrene foam",
+    
+    # --- Paper / Cardboard ---
+    "paper": "paper",
+    "newspaper": "paper",
+    "magazine": "paper",
+    "mail": "paper",
+    "envelope": "paper",
+    "book": "paper",
+    "cardboard": "cardboard",
+    "box": "cardboard",
+    "carton": "cardboard",
+    "tetra": "cardboard",
+    
+    # --- E-Waste ---
+    "electronic": "e-waste",
+    "phone": "e-waste",
+    "laptop": "e-waste",
+    "computer": "e-waste",
+    "monitor": "e-waste",
+    "tv": "e-waste",
+    "television": "e-waste",
+    "screen": "e-waste",
+    "cable": "e-waste",
+    "charger": "e-waste",
+    "keyboard": "e-waste",
+    "mouse": "e-waste",
+    "printer": "e-waste",
+    "circuit": "e-waste",
+    
+    # --- Batteries & Chemicals ---
+    "battery": "alkaline battery",
+    "batteries": "alkaline battery",
+    "paint": "chemical waste",
+    "solvent": "chemical waste",
+    "chemical": "chemical waste",
+    "pesticide": "chemical waste",
+    "oil": "chemical waste",
+    "thermometer": "chemical waste",
 }
 
 HAZARDOUS_MATERIALS = {"alkaline battery", "e-waste", "lithium battery", "chemical waste"}
@@ -225,6 +301,7 @@ LOCAL_RULES_DB = {
     "e-waste": "Do NOT place in household trash. Take to an authorized e-waste recycling center.",
     "organic waste": "Place in compost/organic waste bin if available, otherwise general waste.",
     "polystyrene foam": "Most municipal programs do NOT recycle foam; place in general waste or a specialty drop-off.",
+    "chemical waste": "⚠️ WARNING: Hazardous chemical. Do NOT place in household trash or recycling, and do NOT pour down drains. Bring to a local household hazardous waste (HHW) depot.",
     "uncertain": "Material could not be confidently identified - when in doubt, place in general waste rather than contaminating recycling.",
 }
 
@@ -279,6 +356,7 @@ DECOMPOSITION_YEARS = {
     "e-waste": 1000,
     "organic waste": 0.1,
     "polystyrene foam": 500,
+    "chemical waste": 100,
     "uncertain": None,
 }
 
@@ -295,6 +373,7 @@ CARBON_OFFSET_KG_PER_KG = {
     "e-waste": 0.0,
     "organic waste": 0.5,
     "polystyrene foam": 0.0,
+    "chemical waste": 0.0,
     "uncertain": 0.0,
 }
 
